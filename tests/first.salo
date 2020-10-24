@@ -1,0 +1,13 @@
+
+
+object main {
+    def test() {
+        123
+    }
+}
+
+print( 
+    main.test() 
+)
+
+print(3423423)

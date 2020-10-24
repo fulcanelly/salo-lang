@@ -1,0 +1,56 @@
+import first
+
+print(first.main.test())
+print('hmmm')
+
+object utils {
+
+    def counter(from, max) {
+        i = from - 1 
+
+        def inc {
+
+            if i >= max {
+                return 
+            } 
+            
+            return i = i + 1
+        }
+    }
+
+    def loop(f) {
+        if f() {
+            loop(f)
+        }
+    }
+
+    def fibonacci(max) {
+        i = 0
+
+        def _(a, b) {
+            i = i + 1
+
+            if i >= max {
+                return
+            }
+            
+            print(a)
+           
+            _(b, a + b)
+        }
+        _(1, 1)
+    }
+}
+
+counter = utils.counter(1,4)
+
+def l {
+    res = counter()
+    print(res)
+    res
+}
+
+#utils.loop(l)
+
+utils.fibonacci(10)
+#print(utils)
