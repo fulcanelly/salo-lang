@@ -2,11 +2,9 @@
 
 salo lang is a my first simple language writen in ruby and created only for educational purposes
 
-I write It like a training for my future project
-
-The are a lot of things here are taken from ruby and scala
-
-Actually almost all values in **salo lang** is ruby primitives
+I write It like a training for my future project.
+The are a lot of things here are taken from ruby and scala.
+Actually almost all values in **salo lang** is ruby primitives.
 
 ### Dependencies
 - [ruby](https://github.com/ruby/ruby)
@@ -17,6 +15,10 @@ Simply go to folder with this project and run
 ```
 ruby src/main.rb <path to salo program file>
 ```
+### Examples & Tests
+Due of absence of documentation examples would be good way to learn a litle bit about this language.
+You can find them in `tests` folder.
+
 It's actually far away from complete and have many problems as you can see from list below
 
 ### Todo list
