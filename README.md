@@ -6,6 +6,11 @@ I write It like a training for my future project.
 The are a lot of things here are taken from ruby and scala.
 Actually almost all values in **salo lang** is ruby primitives.
 
+### About implementation
+Grammar of this lang described in LALR.
+It executes code using tree-walk interpreter via AST.
+Also, it have no bindings in scope so it behaves like python from this edge.
+
 ### Dependencies
 - [ruby](https://github.com/ruby/ruby)
 - [rly](https://github.com/farcaller/rly)
