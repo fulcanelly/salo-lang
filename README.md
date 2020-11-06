@@ -31,7 +31,7 @@ It's actually far away from complete and have many problems as you can see from 
 - [ ] Make modules more flexible 
 - [ ] Lambdas, arrays, booleans 
 - [ ] Default values in functions
-- [ ] Register based VM in C
+- [x] Virtual Machine
 - [ ] Documentanion 
 
 It would great if you help with some of these probles.
