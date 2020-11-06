@@ -1,0 +1,24 @@
+def fibonacci(max) {
+    i = 0
+
+    def _(a, b) {
+        i = i + 1
+
+        if i >= max {
+            return 0-1
+        }
+        
+        print(a)
+       
+        _(b, a + b)
+    }
+    _(1, 1)
+}
+
+print(fibonacci(33))
+
+if 5 > 4 {
+	c = 4
+}
+
+print(c)
