@@ -8,7 +8,9 @@ Actually almost all values in **salo lang** is ruby primitives.
 
 ### About implementation
 Grammar of this lang described in LALR.
-It executes code using tree-walk interpreter via AST.
+~~It executes code using tree-walk interpreter via AST.~~
+It compiles AST to own stack-based virtual machinde's bytecode and then run it.
+No any optimizations apply neither at runtime or compile time yet.
 Also, it have no bindings in scope so it behaves like python from this edge.
 
 ### Dependencies
