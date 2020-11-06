@@ -1,7 +1,9 @@
-def check_time(&block) 
+def check_time(what = "unknown", &block) 
 	start_time = Time.now 
 	yield 
-    Time.now - start_time
+    time = Time.now - start_time
+    puts 'took time for ' + what + ": " + time.to_s.red
+
 end
 
 
@@ -9,11 +11,11 @@ require 'colorize'
 
 puts "loading...".light_cyan
 
-time = check_time {
+check_time("loading libs") {
 	require_relative './parser'
 	require_relative './utils'
+	require_relative './vm'
 }
-puts 'took ' + time.to_s.red
 
 
 # todo 
@@ -30,5 +32,26 @@ puts 'took ' + time.to_s.red
 # * salo_pp() 
 
 open(ARGV.first, 'r') do |file| 
-    Runner.new(file).run
+	parsed, analyst, builder = nil
+
+	check_time "pasrsing" do
+		parsed = SaloParser.parse(file.read) 
+	end
+	
+	check_time "ast checks and optimizations" do
+		analyst = SyntaxTreeAnalyst.new()
+		parsed.accept(analyst)
+	end
+
+	check_time "compiling" do
+		builder = BytecodeBuilder.new()
+		builder.compile(parsed)
+	end
+
+	check_time "running" do 
+		vm = SaloPlatform::VM.inst
+		vm.push(builder.stack.last)
+		vm.run
+	end
+
 end

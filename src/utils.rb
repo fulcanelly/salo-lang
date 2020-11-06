@@ -13,6 +13,46 @@ class Scope
     def get(name)
         find(name) or begin @vars[name] = Reference.new(nil) end
     end
+
+    def local_get(name)
+        @vars[name] ||= Reference.new(nil)
+    end
+
+end
+#todo
+class Object
+
+    def inside(&block)
+        self.instance_eval(&block)
+        return self
+    end
+
+    def def_meth(name, &block)
+        define_method name, *block
+    end
+
+    def ivar_get(name)
+        instance_variable_get(__form__name__ name)
+    end
+
+    def ivars()
+        instance_variables.map do __reform__name__(_1) end
+    end
+
+    def ivar_set(name, value)
+        instance_variable_set(__form__name__(name), value)
+    end
+
+    private
+    
+    def __form__name__(name)
+        ("@" + name.to_s).to_sym
+    end
+
+    def __reform__name__(name)
+        name[1..-1].to_sym
+    end
+
 end
 
 class Reference 
@@ -83,7 +123,7 @@ class Runner
     end
 
     def run 
-        code = SimpleLangParse.parse file.read
+        code = SaloParser.parse file.read
         file.close
 
         code.run(@globals)
@@ -119,9 +159,33 @@ class Runner
 
 end
 
-
 class String 
     def salo_pp
         puts self
     end
+end
+
+module Utils 
+
+    def pack_uint32(number)
+        
+        unless (0..2**32) === number
+            raise 'range error %p' % number 
+        end
+
+        arr = []
+        4.times do |i| 
+           arr[i] = (number >> i * 8) % (1 + 0xff)
+        end
+        arr
+    end
+
+    def unpack_uint32(bytes)
+        number = 0
+        4.times do |i| 
+            number += bytes[i] << (8 * i)
+        end
+        number
+    end
+    
 end

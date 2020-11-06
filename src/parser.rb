@@ -3,7 +3,15 @@ require "rly/helpers"
 require 'yaml'
 require 'benchmark'
 
+require_relative './utils'
+
+
+def camel_to_snake(str)
+    str.scan(/[A-Z][a-z]*/).map(&:downcase).join("_")
+end
+
 class ASTNode
+
     def run(scope)
         raise 'abstaract method called'
     end
@@ -16,26 +24,18 @@ class ASTNode
         run(scope)
     end
 
-end
-
-#todo
-class Object
-
-    def def_meth(name, &block)
-        define_method name, *block
+    def accept(visiotor)
+        methname = camel_to_snake(self.class.to_s).to_sym
+        visiotor.send(methname, self)
     end
 
-    def ivar_get(name)
-        instance_variable_get(name)
+    def accept_inner(visiotor)
+    	self.ivars.each do |name|
+    		value = self.ivar_get(name)
+    		value.accept(visiotor) if value
+    	end
     end
 
-    def __form__name__(name)
-        ("@" + name.to_s).to_sym
-    end
-    def ivar_set(name, value)
-        name = ("@" + name.to_s).to_sym
-        instance_variable_set(name, value)
-    end
 end
 
 def genASTNode(**args)
@@ -54,13 +54,39 @@ def genASTNode(**args)
     end
 end
 
-class CallByName < genASTNode target: nil, name: nil, args: []
+class CallByName < genASTNode target: nil, name: nil, arg: nil
+    
     def run(scope)
-
-        args = @args.map do _1.get_val(scope) end
-     
-        target.get_val(scope).send(name, *args)
+        target.get_val(scope).send(name.to_sym, *[ arg.get_val(scope) ])
     end
+
+    def self::ops 
+        @ops ||= {
+            :+ => 'plus',
+            :- => 'minus',
+            :/ => 'divide',
+            :* => 'mult',
+            :> => 'gt',
+            :< => 'lt',
+            :== => 'eq',
+            :>= => 'egt',
+            :<= => 'elt'
+        }
+    end
+
+    def generate(builder, pop_result = true)
+       
+        target.generate(builder, false)
+        arg.generate(builder, false) if arg
+
+        opcode = [
+            :"OPT_#{ self.class.ops[name.to_sym].upcase }",
+        ]
+        opcode << :POP if pop_result
+
+        builder.emit(opcode)
+    end
+
 end
 
 class CodeNode < genASTNode(code: [], type: 'non-function')
@@ -72,6 +98,18 @@ class CodeNode < genASTNode(code: [], type: 'non-function')
             @value = value
             super
         end
+    end
+
+    def generate(builder, pop_result = true)
+     	ccode = code.clone
+        last = ccode.pop
+
+        ccode.each do |one|
+            one.generate(builder)
+        end
+        
+        last.generate(builder, pop_result) if last
+        
     end
 
 
@@ -125,6 +163,28 @@ class FuncDef < genASTNode(name: nil, args: [], code: nil)
         end
         scope.get(name.value).set(func)
     end
+
+    def generate(builder, pop_result = true)
+        
+        builder.def_meth(args)
+        code.generate(builder, false)
+
+        fobj_i = builder.done_meth
+        name_i = builder.add_const(self.name.value) 
+        
+        code = [
+            :MAKE_FUNCTION, *pack_uint32(fobj_i),
+            :STORE_VAR, *pack_uint32(name_i)
+        ]
+
+
+        code.push [ 
+            :LOAD_NOTHING
+        ] unless pop_result
+
+        builder.emit(code)
+    end
+
 end
 
 class FunCall < genASTNode(what: nil, args: [])
@@ -149,6 +209,23 @@ class FunCall < genASTNode(what: nil, args: [])
         self.class.stacktrace.pop
         return for_ret
     end
+
+    def generate(builder, pop_result = true)
+        
+        args.each do |arg| 
+            arg.generate(builder, false)
+        end
+
+        what.generate(builder, false)
+
+        code = [
+            :FUNCALL, *pack_uint32(args.size)
+        ]
+
+        code << :POP if pop_result
+        builder.emit(code)
+    end
+    
 end
 
 class GetField < genASTNode of_what: nil, name: nil
@@ -173,12 +250,40 @@ class Assign < genASTNode(what: nil, new_val: nil)
         obtain_ref(scope).set(val)
         return val
     end
+
+    def generate(builder, pop_result = true)
+        case what
+        when IdentContatiner
+            self.new_val.generate(builder, false)
+            index = builder.add_const what.value
+
+            code = unless pop_result then [ :DUP ] else [ ] end
+            code.push(:STORE_VAR, *pack_uint32(index))
+            builder.emit(code)
+        else
+            raise 'not implemented '
+        end
+    end
+
 end
 
 class Container < genASTNode(value: nil)
     def get_val(unused_scope)
         self.value
     end
+
+    def generate(builder, pop_result = true)
+
+        index = builder.add_const self.value
+        code = [
+            :LOAD_CONST, *pack_uint32(index),
+        ]
+        code << :POP if pop_result
+
+        builder.emit(code)
+        
+    end
+
 end
 
 class ObjectNode < genASTNode(name: String.new, block: CodeNode.new)
@@ -208,6 +313,18 @@ class IdentContatiner < Container
     def get_ref(scope)
         scope.get(self.value)
     end
+
+    def generate(builder, pop_result = true)
+
+        index = builder.add_const self.value
+        code = [
+            :LOAD_VAR, *pack_uint32(index),
+        ]
+        code << :POP if pop_result
+
+        builder.emit(code)
+        
+    end
 end
 
 class Importer < genASTNode(path: [String])
@@ -223,11 +340,35 @@ class Importer < genASTNode(path: [String])
 end
 
 class Variable < IdentContatiner
+    
     def get_val(scope)
-        res = get_ref(scope).show
-       # raise 'undeclared variable \'%s\'' % value unless res
-        return res
+        ref = scope.find(self.value)
+        raise 'undeclared variable \'%s\'' % value unless ref
+        return ref.show
     end
+
+    def __generate(builder, pop_result = true)
+
+        index = builder.add_const self.value
+        builder.emit [
+            :LOAD_VAR, *pack_uint32(index)
+        ]  
+        
+    end
+
+end
+
+class Synthetic < ASTNode
+end
+
+class GetNothing < Synthetic
+	
+	def generate(builder, pop_result = true)
+		builder.emit([:LOAD_NOTHING].tap do |it|
+			it << :POP if pop_result 
+		end)
+	end
+
 end
 
 class IfBranch < ASTNode
@@ -251,6 +392,37 @@ class IfBranch < ASTNode
         to_run = if res then block else else_block or CodeNode.new end
         to_run.run(temp_scope)
     end
+
+    def generate(builder, pop_result = true)
+        
+        cond.generate(builder, false)
+
+        first = builder.mark
+
+        builder.emit( [
+            :JUMP_TO_UNLESS, *first.spread #jump to else_block
+        ] )
+
+        block.generate(builder, pop_result)
+
+        last = nil
+
+        if else_block
+			last = builder.mark
+	        builder.emit [:JUMP_TO, *last.spread] 
+       	end
+
+        if_exit_adr = pack_uint32(builder.size)
+        builder.replace_marked(first, if_exit_adr)
+
+        if else_block 
+        	else_block.generate(builder, pop_result)
+        	else_exit_adr = pack_uint32(builder.size)
+	        builder.replace_marked(last, else_exit_adr)
+
+        end
+    end
+
 end
 
 class Returner < ASTNode
@@ -265,6 +437,21 @@ class Returner < ASTNode
     def initialize(value = nil)
         self.value = value
     end
+
+    def generate(builder, pop_result = true)
+        code = []
+
+        if value
+            value.generate(builder, false)
+        else
+            code << :LOAD_NOTHING
+        end
+
+        code << :LEAVE
+
+        builder.emit(code)
+    end
+
 end
 
 module Rly
@@ -279,7 +466,58 @@ module Rly
     end
 end
 
-class SimpleLangParse < Rly::Yacc
+
+class Visiotor 
+end
+
+class ASTCompiler < Visiotor
+end
+
+class SyntaxTreeAnalyst < Visiotor
+
+    def code_node(node)
+        res = if node.type == :function then 
+            if node.code.size == 0 then 
+                Returner.new
+            end
+
+            unless node.code.last.is_a? Returner then 
+                Returner.new(node.code.pop) 
+            end
+        else
+      		if node.code.size == 0 then 
+                GetNothing.new
+            end
+        end
+
+        node.code << res if res
+        	
+        node.code.each do 
+            _1.accept(self)
+        end
+
+    end
+
+	def if_branch(node)
+		node.accept_inner(self)
+		#node.block.accept(self)
+		#node.else_block.accept(self) if node.else_block
+	end
+
+    def func_def(node)
+    	args = node.args.map(&:value)
+    	if args.uniq.size != args.size then 
+    		raise 'arguments cant have same name' 
+    	end
+        node.code.accept(self)
+    end
+
+    def method_missing(name, *rest)
+        nil
+    end
+end
+
+class SaloParser < Rly::Yacc
 
     #don't seems to work
    # precedence :left,  '+', '-'
@@ -320,7 +558,7 @@ class SimpleLangParse < Rly::Yacc
         | exp t_op exp
         | exp cmpr_op exp' do |res, a, op, b|
         res.value = CallByName.new(
-            target: a.value, name: op.value, args: [ b.value ]
+            target: a.value, name: op.value, arg: b.value
         )
     end
 
@@ -485,7 +723,7 @@ class SimpleLangParse < Rly::Yacc
     end
 
     def self.inst
-        @inst ||= SimpleLangParse.new
+        @inst ||= SaloParser.new
     end
 
     def self.parse(str)
