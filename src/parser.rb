@@ -70,7 +70,8 @@ class CallByName < genASTNode target: nil, name: nil, arg: nil
             :< => 'lt',
             :== => 'eq',
             :>= => 'egt',
-            :<= => 'elt'
+            :<= => 'elt',
+            :-@ => 'prmns'
         }
     end
 
@@ -165,8 +166,11 @@ class FuncDef < genASTNode(name: nil, args: [], code: nil)
     end
 
     def generate(builder, pop_result = true)
-        
-        builder.def_meth(args)
+        prepared_args = args.map do |arg|
+            SaloPlatform::ArgInfo.new(arg.value, nil, nil)
+        end
+
+        builder.def_meth(prepared_args)
         code.generate(builder, false)
 
         fobj_i = builder.done_meth
@@ -363,21 +367,26 @@ end
 
 class GetNothing < Synthetic
 	
+	def it 
+		:LOAD_NOTHING
+	end
+
 	def generate(builder, pop_result = true)
-		builder.emit([:LOAD_NOTHING].tap do |it|
+		code = [ self.it ].tap do |it|
 			it << :POP if pop_result 
-		end)
+		end
+		builder.emit(code)
 	end
 
 end
 
 class IfBranch < ASTNode
 
-    attr_accessor :cond, :block, :else_block
+    attr_accessor :cond, :if_block, :else_block
 
     def initialize(cond: , block:, else_block: nil )
         self.cond = cond
-        self.block = block
+        self.if_block = block
         self.else_block = else_block
     end
 
@@ -389,37 +398,27 @@ class IfBranch < ASTNode
     def run(scope)
         res = cond.get_val(scope)
         temp_scope = Scope.new(scope)
-        to_run = if res then block else else_block or CodeNode.new end
+        to_run = if res then if_block else else_block or CodeNode.new end
         to_run.run(temp_scope)
     end
 
+    #todo
+    #make jump relative
     def generate(builder, pop_result = true)
         
         cond.generate(builder, false)
-
-        first = builder.mark
-
-        builder.emit( [
-            :JUMP_TO_UNLESS, *first.spread #jump to else_block
-        ] )
-
-        block.generate(builder, pop_result)
-
-        last = nil
-
-        if else_block
-			last = builder.mark
-	        builder.emit [:JUMP_TO, *last.spread] 
-       	end
-
-        if_exit_adr = pack_uint32(builder.size)
-        builder.replace_marked(first, if_exit_adr)
+        builder.emit [:JUMP_UNLESS, *(first = builder.mark).spread ] #jump to else_block
+        start = builder.size
+        
+        if_block.generate(builder, pop_result)
+        builder.emit [:JUMP_FORWARD, *(last = builder.mark).spread] if else_block
+        
+        first.replace(pack_uint32 (builder.size - start))
+        start = builder.size + 1
 
         if else_block 
         	else_block.generate(builder, pop_result)
-        	else_exit_adr = pack_uint32(builder.size)
-	        builder.replace_marked(last, else_exit_adr)
-
+			last.replace(pack_uint32 (builder.size - start))
         end
     end
 
@@ -500,8 +499,6 @@ class SyntaxTreeAnalyst < Visiotor
 
 	def if_branch(node)
 		node.accept_inner(self)
-		#node.block.accept(self)
-		#node.else_block.accept(self) if node.else_block
 	end
 
     def func_def(node)
@@ -515,6 +512,18 @@ class SyntaxTreeAnalyst < Visiotor
     def method_missing(name, *rest)
         nil
     end
+end
+
+class GetTrue < GetNothing
+	def it 
+		:LOAD_TRUE
+	end
+end
+
+class GetFalse < GetNothing
+	def it 
+		:LOAD_FALSE
+	end
 end
 
 class SaloParser < Rly::Yacc
@@ -567,7 +576,7 @@ class SaloParser < Rly::Yacc
  #   rule 'bexp : term ', &assign_rhs
     rule 'term : exp', &assign_rhs
 
-    rule 'exp : funcall | value | assign ', &assign_rhs
+    rule 'exp : funcall | value | assign | TRUE | NOTHING | FALSE', &assign_rhs
 
     rule 'var: IDENT' do |res, name|
         res.value = Variable.new(value: name.value.value)
@@ -688,6 +697,21 @@ class SaloParser < Rly::Yacc
         token :ELSIF, 'elsif'
         token :IMPORT, 'import'
 
+        token :NOTHING, 'nothing' do |t|
+    		t.value = GetNothing.new
+    		t
+    	end
+
+        token :TRUE, 'true' do |t|
+        	t.value = GetTrue.new
+        	t
+        end 
+        
+        token :FALSE, 'false' do |t| 
+        	t.value = GetFalse
+        	t
+        end
+        
         token :COMMENT, /#.*/ do
             nil 
         end
