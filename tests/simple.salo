@@ -8,17 +8,11 @@ def fibonacci(max) {
             return 0-1
         }
         
-        print(a)
+        #print(a)
        
         _(b, a + b)
     }
     _(1, 1)
 }
 
-print(fibonacci(33))
-
-if 5 > 4 {
-	c = 4
-}
-
-print(c)
+(fibonacci(33000))
