@@ -25,7 +25,9 @@ module SaloPlatform
 
         attr_accessor :ppointer, :stack, :opcodes, :code, :var_scope, :chunk, :forencode
 
-        def initialize
+        def initialize  
+            @fetch_uint_cache = []
+
             @ppointer = 0
             @stack = []
 
@@ -43,7 +45,19 @@ module SaloPlatform
 
         def compose()
             self.code = self.chunk.bytecode
-           # self.func_adresses = Hash.new
+            code << encode(:LEAVE)
+            #@main_size = self.code.size
+
+            chunk.constpool
+            	.filter { _1.class == Function }
+            	.each { |func| 
+            		func.position = @code.size
+            		@code.push(*func.bytecode)
+            	}
+
+            #todo 
+            #spread all functions in one chunk
+
         end
 
         def get_f_pointer()
@@ -55,29 +69,38 @@ module SaloPlatform
         end
 
         def run
-            
-            while self.ppointer < code.size
-                instruction = code[self.ppointer]
-               # pp call_stack.size
-                #puts
-              #  raise 'no such opcode ' unless instruction 
-
-               # print decode instruction#if self.mode.verbose
-                self.ppointer += 1
-                execute(instruction)
+        #	counter = Hash.new(0)
+            while @ppointer < code.size or not self.it_top_level
+                instruction = code[@ppointer]
+               # counter[decode instruction] += 1
+                @ppointer += 1
+            	self.opcodes[instruction].call
             end
+            #pp counter
         end
 
         def execute(byte)
-            self.opcodes[byte].call
+        	self.opcodes[byte].call
+
         end
 
+
+        #todo
+        #make caching
         def fetch_uint()
             point = self.ppointer
-            range = point..(point + 3)
-            bytes = self.code[range]
             self.ppointer += 4
-            unpack_uint32(bytes) 
+
+
+            if res = @fetch_uint_cache[ppointer] then 
+                return res 
+           else 
+
+                range = point..(point + 3)
+                bytes = self.code[range]
+
+                @fetch_uint_cache[ppointer] = unpack_uint32(bytes) 
+            end
         end
 
         #todo
@@ -90,14 +113,22 @@ module SaloPlatform
         end
 
         #todo
-        #rethink name 
+        #make caching
         def get_const_by_index()
             res = @chunk.constpool[ fetch_uint() ]
             return res
         end
 
-        class CallFrame < Struct.new(:pointer, :bytecode, :scope, :what)
+        class CallFrame < Struct.new(:pointer, :scope, :what)
 
+        end
+
+        def it_top_level
+            self.call_stack.size == 0
+        end
+
+        def stop_machine
+        	@ppointer = @code.size
         end
 
         def init_opcodes()
@@ -108,6 +139,14 @@ module SaloPlatform
 
             add_op :LOAD_NOTHING do 
                 stack << Nothing.it
+            end
+
+            add_op :LOAD_TRUE do 
+                stack << true
+            end
+            
+            add_op :LOAD_FALSE do 
+                stack << false
             end
 
             add_op :LOAD_VAR do
@@ -124,24 +163,28 @@ module SaloPlatform
                 pp stack.pop
             end 
 
+            add_op :NOP do 
+            end
             #todo 
             add_op :FUNCALL do
                 fobj = stack.pop
                 args_count = fetch_uint()
                 args = stack.pop args_count
 
-                case fobj
-                when Function
-                    call_stack << CallFrame.new(self.ppointer, self.code, self.var_scope, fobj)
-                    self.ppointer = 0
-                    self.code = fobj.bytecode
-                    self.var_scope = Scope.new(fobj.upper)
-                    fobj.pass_args(var_scope, args)
-                else
-                    #fobj.call(*args)
-                    self.stack << fobj.call(*args)
-                end
+                call_stack << CallFrame.new(self.ppointer, self.var_scope, fobj)
+                self.ppointer = fobj.position
+                self.var_scope = Scope.new(fobj.upper)
+                fobj.pass_args(var_scope, args)
+       
             end
+
+            add_op :NATIVE_CALL do 
+				fobj = stack.pop
+                args_count = fetch_uint()
+                args = stack.pop args_count
+                self.stack << fobj.call(*args)
+            end
+
 
             add_op :MAKE_FUNCTION do 
                 funobj = get_const_by_index()
@@ -149,10 +192,8 @@ module SaloPlatform
                 stack << funobj
             end
 
-            add_op :JUMP_TO do 
-                point = fetch_uint()
-                self.ppointer = point 
-                @jump_flag = true 
+            add_op :JUMP_FORWARD do 
+                self.ppointer += fetch_uint() 
             end
 
             add_op :TEST do 
@@ -160,17 +201,20 @@ module SaloPlatform
                 @jump_flag = item ? true : false 
             end
 
-            add_op :JUMP_TO_UNLESS do 
+            add_op :JUMP_UNLESS do 
                 bool = stack.pop
-                point = fetch_uint()
-                self.ppointer = point unless bool
+                shift = fetch_uint()
+                self.ppointer += shift unless bool
             end
 
             add_op :LEAVE do 
                 frame = call_stack.pop
-                self.ppointer = frame.pointer
-                self.code = frame.bytecode
-                self.var_scope = frame.scope
+                if frame == nil then 
+                	stop_machine 
+                else 
+	                self.ppointer = frame.pointer
+	                self.var_scope = frame.scope
+	            end
             end
 
             add_op :POP do 
@@ -197,7 +241,7 @@ module SaloPlatform
                 :< => 'lt',
                 :== => 'eq',
                 :>= => 'egt',
-                :<= => 'elt'
+                :<= => 'elt',
             }
             
             ops.each(&gen_op)
@@ -233,7 +277,8 @@ module SaloPlatform
             @i ||= begin
                 vm = VM.new
                 vm.init_opcodes
-                vm.var_scope.get(:print).set(method :puts)
+               # vm.var_scope.get(:__print__).set(method :puts)
+
                 vm
             end 
         end 
@@ -293,7 +338,7 @@ module SaloPlatform
             @bytecode = []
         end
 
-        attr_accessor :upper, :bytecode, :args_info, :func_info
+        attr_accessor :upper, :bytecode, :args_info, :func_info, :position
 
         #todo
         def chek_args(args)
@@ -307,6 +352,15 @@ module SaloPlatform
             end
         end
 
+        def inspect 
+
+            "- : function <<#{bytecode.join(", ")}>>"
+        end
+
+        def to_s 
+            inspect
+        end
+
     end
 
 end #module SaloPlatform
@@ -318,16 +372,17 @@ class BytecodeBuilder
 
 
     class Mark
-        attr_accessor :id, :size
+        attr_accessor :id, :size, :builder
 
         def self::gen_id
             @count ||= 0
             @count += 1
         end
 
-        def initialize(size)
+        def initialize(size, builder)
             @id = self.class.gen_id
             @size = size
+            @builder = builder
         end
 
         def spread 
@@ -342,6 +397,32 @@ class BytecodeBuilder
                 false
             end
         end
+
+        def replace(with)
+            builder.replace_marked(self, with)
+        end
+
+    end
+
+    def init_std 
+
+        def_meth [ SaloPlatform::ArgInfo.new(:dont_matter) ]
+        stack.last.upper = Scope.new(nil)
+
+ 		stack.last.upper.get(:__print__).set(method :puts)
+
+        self.emit [ 
+        	:LOAD_VAR, *pack_uint32(add_const :dont_matter),
+        	:LOAD_VAR, *pack_uint32(add_const :__print__),
+        	:NATIVE_CALL, *pack_uint32(1),
+        	:LEAVE
+        ]
+        
+        self.emit [
+        	:LOAD_CONST, *pack_uint32(done_meth),
+        	:STORE_VAR, *pack_uint32(add_const :print)
+        ]
+
     end
 
     def it_top_level
@@ -349,7 +430,7 @@ class BytecodeBuilder
     end
 
     def mark(size = 4)
-        Mark.new(size)
+        Mark.new(size, self)
     end
     
     def replace_marked(type, res)
@@ -379,6 +460,7 @@ class BytecodeBuilder
         self.stack = [ SaloPlatform::BytecodeChunk.new ]
         self.constpool = stack.last.constpool
         self.vm = SaloPlatform::VM.inst
+        self.init_std()
     end
 
     def bytecode 
@@ -387,11 +469,7 @@ class BytecodeBuilder
 
     def def_meth(args)
         stack << SaloPlatform::Function::new.tap do |it|
-            it.args_info = [ ]::tap do |ainfo|
-                args.each do |arg|
-                    ainfo << SaloPlatform::ArgInfo.new(arg.value, nil, nil)
-                end
-            end
+            it.args_info = args
         end
     end
 
