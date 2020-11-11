@@ -52,6 +52,7 @@ open(ARGV.first, 'r') do |file|
 		vm = SaloPlatform::VM.inst
 		vm.push(builder.stack.last)
 		vm.run
+		#pp vm.stack
 	end
 
 end
